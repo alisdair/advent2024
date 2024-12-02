@@ -60,8 +60,7 @@ func similarity(as, bs []int) int {
 
 func main() {
 	if len(os.Args) != 2 {
-		os.Args = []string{"d1", "example.txt"}
-		// log.Fatal("Usage: d1 [filepath]")
+		log.Fatal("Usage: d1 [filepath]")
 	}
 
 	f := get(os.Open(os.Args[1]))
