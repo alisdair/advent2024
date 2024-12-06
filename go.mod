@@ -2,6 +2,8 @@ module github.com/alisdair/advent2024
 
 go 1.23.3
 
+require github.com/buger/goterm v1.0.4
+
 require (
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
