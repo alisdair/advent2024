@@ -13,22 +13,62 @@ import (
 
 var debug = flag.Bool("debug", false, "debug mode")
 
+type Guard struct {
+	p       Pos
+	c       Cell
+	turning bool
+}
+
+func (g *Guard) Turn() {
+	g.turning = true
+	switch g.c {
+	case guardUp:
+		g.c = guardRight
+	case guardRight:
+		g.c = guardDown
+	case guardDown:
+		g.c = guardLeft
+	case guardLeft:
+		g.c = guardUp
+	default:
+		log.Fatalf("next guard for %q invalid", g.c)
+	}
+}
+
+func (g *Guard) Visited() Cell {
+	if g.turning {
+		g.turning = false
+		return visitedCorner
+	}
+	switch g.c {
+	case guardDown, guardUp:
+		return visitedVert
+	case guardLeft, guardRight:
+		return visitedHoriz
+	default:
+		log.Fatalf("Visited called on invalid guard cell %v", g.c)
+		return unvisited
+	}
+}
+
 type Cell rune
 
 const (
-	unvisited  Cell = '.'
-	visited    Cell = 'X'
-	obstacle   Cell = '#'
-	guardUp    Cell = '^'
-	guardRight Cell = '>'
-	guardDown  Cell = 'v'
-	guardLeft  Cell = '<'
+	unvisited     Cell = '.'
+	visitedVert   Cell = '|'
+	visitedHoriz  Cell = '-'
+	visitedCorner Cell = '+'
+	obstacle      Cell = '#'
+	guardUp       Cell = '^'
+	guardRight    Cell = '>'
+	guardDown     Cell = 'v'
+	guardLeft     Cell = '<'
 )
 
 func NewCell(r rune) (Cell, error) {
 	c := Cell(r)
 	switch c {
-	case unvisited, visited, obstacle, guardUp, guardRight, guardDown, guardLeft:
+	case unvisited, visitedVert, visitedHoriz, obstacle, guardUp, guardRight, guardDown, guardLeft:
 		return c, nil
 	default:
 		return c, fmt.Errorf("unknown cell %q", r)
@@ -44,22 +84,6 @@ func (c Cell) IsGuard() bool {
 	}
 }
 
-func (c Cell) NextGuard() Cell {
-	switch c {
-	case guardUp:
-		return guardRight
-	case guardRight:
-		return guardDown
-	case guardDown:
-		return guardLeft
-	case guardLeft:
-		return guardUp
-	default:
-		log.Fatalf("next guard for %q invalid", c)
-		return c
-	}
-}
-
 type Pos struct {
 	x, y int
 }
@@ -72,7 +96,7 @@ func (p Pos) Left() Pos  { return Pos{p.x - 1, p.y} }
 type Grid struct {
 	cells         [][]Cell
 	width, height int
-	guard         *Pos
+	guard         *Guard
 }
 
 func (g *Grid) Validate() {
@@ -85,13 +109,6 @@ func (g *Grid) Validate() {
 			log.Fatalf("row %d: wrong width, want %d, got %d", i, want, got)
 		}
 	}
-
-	if g.guard != nil {
-		guard, ok := g.At(*g.guard)
-		if ok && !guard.IsGuard() {
-			log.Fatalf("invalid guard %c at %v", guard, *g.guard)
-		}
-	}
 }
 
 func (g *Grid) Render() {
@@ -102,6 +119,10 @@ func (g *Grid) Render() {
 			tm.Printf("%c ", cell)
 		}
 		tm.Println()
+	}
+	if g.guard != nil {
+		tm.MoveCursor(g.guard.p.x*2+1, g.guard.p.y+1)
+		tm.Printf("%c", g.guard.c)
 	}
 
 	tm.Flush()
@@ -123,39 +144,35 @@ func (g *Grid) Iterate() {
 		return
 	}
 
-	guard, ok := g.At(*g.guard)
-	if !ok {
-		return
-	}
-
 	var next Pos
-	switch guard {
+	switch g.guard.c {
 	case guardUp:
-		next = g.guard.Up()
+		next = g.guard.p.Up()
 	case guardRight:
-		next = g.guard.Right()
+		next = g.guard.p.Right()
 	case guardDown:
-		next = g.guard.Down()
+		next = g.guard.p.Down()
 	case guardLeft:
-		next = g.guard.Left()
+		next = g.guard.p.Left()
 	default:
-		log.Fatalf("unexpected guard %c at %v", guard, *g.guard)
+		log.Fatalf("unexpected guard %c at %v", g.guard.c, g.guard.p)
 	}
 
 	target, ok := g.At(next)
 	if !ok {
 		// Bye!
-		g.Set(*g.guard, visited)
+		g.Set(g.guard.p, g.guard.Visited())
 		g.guard = nil
+		return
 	}
 	switch target {
-	case unvisited, visited:
-		g.Set(*g.guard, visited)
-		g.Set(next, guard)
-		g.guard = &next
+	case unvisited, visitedVert, visitedHoriz, visitedCorner:
+		g.Set(g.guard.p, g.guard.Visited())
+		g.guard.p = next
 	case obstacle:
-		guard = guard.NextGuard()
-		g.Set(*g.guard, guard)
+		g.guard.Turn()
+	default:
+		log.Fatalf("unexpected target cell %c", target)
 	}
 }
 
@@ -163,7 +180,8 @@ func (g *Grid) Visited() int {
 	ret := 0
 	for _, row := range g.cells {
 		for _, cell := range row {
-			if cell == visited {
+			switch cell {
+			case visitedHoriz, visitedVert, visitedCorner:
 				ret++
 			}
 		}
@@ -190,7 +208,7 @@ func main() {
 	defer f.Close()
 
 	var cells [][]Cell
-	var guard *Pos
+	guard := &Guard{}
 
 	s := bufio.NewScanner(f)
 	y := 0
@@ -200,7 +218,10 @@ func main() {
 		for x, l := range line {
 			c := get(NewCell(l))
 			if c.IsGuard() {
-				guard = &Pos{x, y}
+				guard.c = c
+				guard.p.x = x
+				guard.p.y = y
+				c = unvisited
 			}
 			row = append(row, c)
 		}
@@ -225,10 +246,13 @@ func main() {
 	for grid.guard != nil {
 		if *debug {
 			grid.Render()
-			time.Sleep(time.Millisecond * 33)
+			time.Sleep(time.Millisecond * 1000 / 60)
 		}
 		grid.Iterate()
 	}
+	if *debug {
+		grid.Render()
+	}
 
-	fmt.Printf("visited: %d\n", grid.Visited())
+	fmt.Printf("\n\nvisited: %d\n", grid.Visited())
 }
